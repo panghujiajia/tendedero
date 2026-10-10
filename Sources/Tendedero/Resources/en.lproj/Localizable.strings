@@ -4,20 +4,20 @@
 
 /* AppDelegate */
 "Let Tendedero handle your screenshots?" = "Let Tendedero handle your screenshots?";
-"Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Tendedero quits." = "Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Tendedero quits.";
 "Turn on" = "Turn on";
 "Not now" = "Not now";
 "Hide line" = "Hide line";
 "Show line" = "Show line";
 "Take everything down" = "Take everything down";
 "Handle screenshots" = "Handle screenshots";
-"Screenshots hang instantly and skip the Desktop" = "Screenshots hang instantly and skip the Desktop";
 "Open screenshots folder" = "Open screenshots folder";
 "Sounds" = "Sounds";
 "Open at login" = "Open at login";
 "Quit Tendedero" = "Quit Tendedero";
 "Could not change the login setting" = "Could not change the login setting";
 "Move Tendedero to the Applications folder and try again." = "Move Tendedero to the Applications folder and try again.";
+"Zoom on hover" = "Zoom on hover";
+"Rest the pointer on a photo to see it larger" = "Rest the pointer on a photo to see it larger";
 
 /* GrabArea */
 "Copy" = "Copy";
@@ -34,3 +34,18 @@
 
 /* PeggedView */
 "Copied" = "Copied";
+"Choose" = "Choose";
+"Choose an available folder you can read and write to, then try again." = "Choose an available folder you can read and write to, then try again.";
+"Choose screenshots folder" = "Choose screenshots folder";
+"Choose screenshots folder…" = "Choose screenshots folder…";
+"Could not use the screenshots folder" = "Could not use the screenshots folder";
+"Hang copied images" = "Hang copied images";
+"Hang images you copy too?" = "Hang images you copy too?";
+"Images you copy hang on the line too" = "Images you copy hang on the line too";
+"Images you copy, like a screenshot taken with Control held or Copy Image in a browser, will hang on the line as well. Tendedero only keeps images, never text, and skips anything a password manager marks as private. You can change this from the menu bar." = "Images you copy, like a screenshot taken with Control held or Copy Image in a browser, will hang on the line as well. Tendedero only keeps images, never text, and skips anything a password manager marks as private. You can change this from the menu bar.";
+"New screenshots will be saved here while Handle screenshots is on. Existing files stay where they are." = "New screenshots will be saved here while Handle screenshots is on. Existing files stay where they are.";
+"New screenshots will be saved in the chosen folder and hang instantly, without the floating thumbnail. The cross moves files in Tendedero’s own folder to the Trash; in other folders, it only takes them down. You can turn this off from the menu bar, and your previous settings come back when Tendedero quits." = "New screenshots will be saved in the chosen folder and hang instantly, without the floating thumbnail. The cross moves files in Tendedero’s own folder to the Trash; in other folders, it only takes them down. You can turn this off from the menu bar, and your previous settings come back when Tendedero quits.";
+"Save new screenshots to the chosen folder and hang them instantly" = "Save new screenshots to the chosen folder and hang them instantly";
+"Show new items" = "Show new items";
+"The line comes down for a moment when something new hangs" = "The line comes down for a moment when something new hangs";
+"Use default screenshots folder" = "Use default screenshots folder";

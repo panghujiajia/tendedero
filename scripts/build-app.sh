@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 APP="build/Tendedero.app"
 VERSION="1.0.0"
+export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$PWD/.build/ModuleCache}"
+SWIFT_FLAGS=(--disable-sandbox --cache-path .build/cache --config-path .build/config --security-path .build/security)
 
 # Builds one architecture and prints the binary's path.
 # The Command Line Tools for macOS 27 ship an SDK whose SwiftUI needs a macro
@@ -14,14 +16,14 @@ VERSION="1.0.0"
 # newest macOS 26 SDK installed alongside it.
 build_arch() {
   local triple="$1-apple-macosx14.0"
-  if [ -z "${SDKROOT:-}" ] && ! swift build -c "$CONFIG" --triple "$triple" >&2; then
+  if [ -z "${SDKROOT:-}" ] && ! swift build "${SWIFT_FLAGS[@]}" -c "$CONFIG" --triple "$triple" >&2; then
     FALLBACK="$(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk 2>/dev/null | sort -V | tail -1)"
     if [ -z "$FALLBACK" ]; then exit 1; fi
     echo "Retrying with $FALLBACK" >&2
     export SDKROOT="$FALLBACK"
   fi
-  if [ -n "${SDKROOT:-}" ]; then swift build -c "$CONFIG" --triple "$triple" >&2; fi
-  cp "$(swift build -c "$CONFIG" --triple "$triple" --show-bin-path)/Tendedero" "$OUT/Tendedero-$1"
+  if [ -n "${SDKROOT:-}" ]; then swift build "${SWIFT_FLAGS[@]}" -c "$CONFIG" --triple "$triple" >&2; fi
+  cp "$(swift build "${SWIFT_FLAGS[@]}" -c "$CONFIG" --triple "$triple" --show-bin-path)/Tendedero" "$OUT/Tendedero-$1"
 }
 
 # A universal binary, so it runs on Apple silicon and on Intel Macs, from
@@ -84,11 +86,11 @@ PLIST
 # set), with the hardened runtime and a secure timestamp that notarization
 # requires. Without one, sign ad hoc so the app still runs locally.
 IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/{print $2; exit}')}"
-if [ -n "$IDENTITY" ]; then
+if [ -n "$IDENTITY" ] && [ "$IDENTITY" != "-" ]; then
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
   echo "Signed with $IDENTITY"
 else
   codesign --force --deep --sign - "$APP" >/dev/null
-  echo "Signed ad hoc (no Developer ID found)"
+  echo "Signed ad hoc"
 fi
 echo "Built $APP"

@@ -1,114 +1,268 @@
 import Foundation
 
-/// Watches the folder macOS saves screenshots to and reports new ones.
-/// Tendedero never takes screenshots itself: you keep your usual shortcut
-/// (or CleanShot, or anything else) and the line just picks them up.
+/// Directory I/O never runs on the main thread, including the permission wait.
+/// A prepared watcher has a baseline, but delivers nothing until committed.
+@MainActor
 final class ScreenshotWatcher {
     let folder: URL
-    /// On the Desktop we only accept real screenshots, tagged by macOS with an
-    /// extended attribute. In a dedicated folder, any image counts.
-    private let onlyTaggedScreenshots: Bool
-    private var known = Set<String>()
+    private let onNew: (URL) -> Bool
+    private let onChange: () -> Void
+    private let launchDate: Date
+    private var generation = UUID()
     private var source: DispatchSourceFileSystemObject?
     private var pending: DispatchWorkItem?
-    private let onNew: (URL) -> Void
-    private let onChange: () -> Void
+    private var retry: DispatchWorkItem?
+    private var known = Set<String>()
+    private var initial: [Entry] = []
+    private var rejected: [String: Rejected] = [:]
+    private let listing: @Sendable (URL) throws -> [Entry]
+    private let retryPolicy: RetryPolicy
+    private var active = false
+    private var starting = false
+    private var scanning = false
+    private var missed = false
 
-    private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tif", "tiff", "gif", "webp"]
+    nonisolated static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tif", "tiff", "gif", "webp", "bmp"]
+    nonisolated static let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
 
-    static let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+    struct RetryPolicy: Sendable {
+        var delays: [TimeInterval] = [0.2, 0.4, 0.8]
+        var recheckInterval: TimeInterval = 5
+        var batchSize: Int = 16
+    }
 
-    /// Watches the folder macOS saves screenshots to, or a given folder.
-    init(folder: URL? = nil, onNew: @escaping (URL) -> Void, onChange: @escaping () -> Void) {
+    private struct Rejected {
+        let revision: Revision
+        var attempts = 0
+        var nextAttempt = Date.distantPast
+    }
+
+    init(folder: URL? = nil, startedAt: Date = Date(),
+         retryPolicy: RetryPolicy = RetryPolicy(),
+         listing: @escaping @Sendable (URL) throws -> [Entry] = { try ScreenshotWatcher.list($0) },
+         onNew: @escaping (URL) -> Bool, onChange: @escaping () -> Void) {
+        self.folder = (folder ?? Self.screenshotFolder()).resolvingSymlinksInPath().standardizedFileURL
+        launchDate = startedAt
         self.onNew = onNew
         self.onChange = onChange
-        self.folder = folder ?? Self.screenshotFolder()
-        onlyTaggedScreenshots = self.folder.standardizedFileURL.path == Self.desktop.standardizedFileURL.path
+        self.listing = listing
+        self.retryPolicy = retryPolicy
     }
 
-    static func screenshotFolder() -> URL {
-        let fm = FileManager.default
-        // Read fresh through cfprefsd: inbox mode changes this value at runtime.
-        CFPreferencesAppSynchronize("com.apple.screencapture" as CFString)
-        // macOS 27 keeps it in "location-screenshot"; earlier versions in "location".
-        let domain = "com.apple.screencapture" as CFString
-        let raw = (CFPreferencesCopyAppValue("location-screenshot" as CFString, domain) as? String)
-            ?? (CFPreferencesCopyAppValue("location" as CFString, domain) as? String)
-        if let raw, !raw.isEmpty {
-            let url = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
-            var isDir: ObjCBool = false
-            if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue { return url }
+    nonisolated static func screenshotFolder(settings: [String: Any]? = nil) -> URL {
+        let values = settings ?? SystemScreenshotPreferences().read()
+        if let raw = (values["locationScreenshot"] as? String) ?? (values["location"] as? String), !raw.isEmpty {
+            return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
         }
-        return fm.homeDirectoryForCurrentUser.appendingPathComponent("Desktop", isDirectory: true)
+        return desktop
     }
 
-    /// Anything created after the app launched counts as new, even if it
-    /// landed before the watcher was ready (macOS may be asking for Desktop
-    /// access at that moment).
-    private let launchDate = Date()
+    /// Selection adopts existing images without importing them. Startup may
+    /// include captures created while access to the directory was pending.
+    func prepare(includeRecent: Bool = false) async throws {
+        stop()
+        starting = true
+        let token = generation
+        let folder = folder
+        let listing = listing
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<(Int32, [Entry]), Error> in
+            let fd = open(folder.path, O_EVTONLY)
+            guard fd >= 0 else { return .failure(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EACCES)) }
+            do { return .success((fd, try listing(folder))) }
+            catch { close(fd); return .failure(error) }
+        }.value
+        guard generation == token, !Task.isCancelled else {
+            if case let .success((fd, _)) = result { close(fd) }
+            throw CancellationError()
+        }
+        starting = false
+        let (fd, entries) = try result.get()
+        known = Set(entries.map { $0.url.path })
+        initial = includeRecent ? entries.filter { $0.created >= launchDate && $0.candidate } : []
+        known.subtract(initial.map { $0.url.path })
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete], queue: .main)
+        src.setEventHandler { [weak self] in
+            guard let self, self.generation == token else { return }
+            self.scheduleScan()
+        }
+        src.setCancelHandler { close(fd) }
+        source = src
+        src.resume()
+    }
 
     func start() {
-        let files = listing()
-        known = Set(files.filter { creationDate($0) < launchDate }.map(\.path))
-        for url in files where !known.contains(url.path) && isCandidate(url) {
-            onNew(url)
-        }
-        known = Set(files.map(\.path))
-        let fd = open(folder.path, O_EVTONLY)
-        guard fd >= 0 else {
-            NSLog("Tendedero: cannot watch \(folder.path)")
+        guard !active, !starting else { return }
+        if source == nil {
+            starting = true
+            let token = generation
+            Task { [weak self] in
+                guard let self, self.generation == token else { return }
+                do { try await self.prepare(includeRecent: true); self.start() }
+                catch is CancellationError {} catch { NSLog("Tendedero: cannot watch \(self.folder.path): \(error)") }
+            }
             return
         }
-        let src = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        src.setEventHandler { [weak self] in self?.scheduleScan() }
-        src.setCancelHandler { close(fd) }
-        src.resume()
-        source = src
+        active = true
+        let captures = initial
+        initial = []
+        adopt(captures, reconcile: false)
+        // Covers the gap between the baseline listing and installing the source,
+        // and captures written after preparation but before changing settings.
+        scan()
     }
 
     func stop() {
+        generation = UUID()
+        active = false
+        starting = false
+        scanning = false
+        missed = false
         pending?.cancel()
+        pending = nil
+        retry?.cancel()
+        retry = nil
         source?.cancel()
         source = nil
+        known = []
+        initial = []
+        rejected = [:]
     }
 
+    deinit { pending?.cancel(); retry?.cancel(); source?.cancel() }
+
     private func scheduleScan() {
+        guard active else { return }
         pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.scan() }
+        let token = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == token else { return }
+            self.scan()
+        }
         pending = work
-        // macOS writes a hidden temp file and renames it; give it a moment.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
     private func scan() {
-        let files = listing()
-        for url in files where !known.contains(url.path) && isCandidate(url) {
-            onNew(url)
+        guard active else { return }
+        guard !scanning else { missed = true; return }
+        scanning = true
+        let token = generation
+        let folder = folder
+        let listing = listing
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { try? listing(folder) }.value
+            guard let self, self.generation == token, self.active else { return }
+            self.scanning = false
+            if let entries = result {
+                self.adopt(entries)
+                guard self.generation == token, self.active else { return }
+                self.onChange()
+            }
+            self.scheduleRetry()
+            if self.missed { self.missed = false; self.scan() }
         }
-        known = Set(files.map(\.path))
-        onChange()
     }
 
-    private func listing() -> [URL] {
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])) ?? []
-        return urls.sorted { creationDate($0) < creationDate($1) }
-    }
-
-    private func creationDate(_ url: URL) -> Date {
-        (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-    }
-
-    private func isCandidate(_ url: URL) -> Bool {
-        guard Self.imageExtensions.contains(url.pathExtension.lowercased()) else { return false }
-        return onlyTaggedScreenshots ? isScreenCapture(url) : true
-    }
-
-    private func isScreenCapture(_ url: URL) -> Bool {
-        url.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return false }
-            return getxattr(path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) >= 0
+    private func adopt(_ entries: [Entry], reconcile: Bool = true) {
+        guard active else { return }
+        let token = generation
+        if reconcile {
+            let paths = Set(entries.map { $0.url.path })
+            known.formIntersection(paths)
+            rejected = rejected.filter { paths.contains($0.key) }
         }
+        let now = Date()
+        let candidates = entries.filter { !known.contains($0.url.path) && $0.candidate }
+        for entry in candidates where rejected[entry.url.path]?.revision != entry.revision {
+            // Only this file changing starts a fresh retry budget.
+            rejected[entry.url.path] = Rejected(revision: entry.revision)
+        }
+        let due = candidates.filter {
+            guard let state = rejected[$0.url.path] else { return false }
+            return state.attempts <= retryPolicy.delays.count && state.nextAttempt <= now
+        }.sorted {
+            let a = rejected[$0.url.path]!.nextAttempt, b = rejected[$1.url.path]!.nextAttempt
+            if a != b { return a < b }
+            return $0.created == $1.created ? $0.url.path < $1.url.path : $0.created < $1.created
+        }
+        for entry in due.prefix(retryPolicy.batchSize) {
+            guard generation == token, active else { return }
+            let accepted = onNew(entry.url)
+            guard generation == token, active else { return }
+            if accepted {
+                known.insert(entry.url.path)
+                rejected[entry.url.path] = nil
+            } else if var state = rejected[entry.url.path] {
+                state.attempts += 1
+                state.nextAttempt = state.attempts <= retryPolicy.delays.count
+                    ? now.addingTimeInterval(retryPolicy.delays[state.attempts - 1]) : .distantFuture
+                rejected[entry.url.path] = state
+            }
+        }
+        scheduleRetry()
+    }
+
+    private func scheduleRetry() {
+        retry?.cancel()
+        retry = nil
+        guard active, !rejected.isEmpty else { return }
+        // One shared wake-up and one directory descriptor, regardless of failed
+        // file count. Exhausted files only decode again when metadata changes.
+        let next = rejected.values.map(\.nextAttempt).min() ?? .distantFuture
+        let delay = max(0.05, min(retryPolicy.recheckInterval, next.timeIntervalSinceNow))
+        let token = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == token, self.active else { return }
+            self.retry = nil
+            self.scan()
+        }
+        retry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    struct Entry: Sendable {
+        let url: URL
+        let created: Date
+        let candidate: Bool
+        let revision: Revision
+    }
+
+    struct Revision: Equatable, Sendable {
+        let inode: UInt64
+        let size: Int64
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+        let changedSeconds: Int
+        let changedNanoseconds: Int
+    }
+
+    nonisolated static func list(_ folder: URL) throws -> [Entry] {
+        let fm = FileManager.default
+        var readError: Error?
+        guard let iterator = fm.enumerator(at: folder, includingPropertiesForKeys: [.creationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants], errorHandler: { _, error in
+                readError = error; return false
+            }) else { throw CocoaError(.fileReadNoPermission) }
+        let taggedOnly = folder == desktop.resolvingSymlinksInPath().standardizedFileURL
+        var images: [Entry] = []
+        while let url = autoreleasepool(invoking: { iterator.nextObject() as? URL }) {
+            guard imageExtensions.contains(url.pathExtension.lowercased()) else { continue }
+            let values = try url.resourceValues(forKeys: [.creationDateKey, .isRegularFileKey])
+            guard values.isRegularFile == true else { continue }
+            var info = stat()
+            guard stat(url.path, &info) == 0 else { continue }
+            let tagged = !taggedOnly || url.withUnsafeFileSystemRepresentation { path in
+                guard let path else { return false }
+                return getxattr(path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) >= 0
+            }
+            let revision = Revision(inode: info.st_ino, size: info.st_size,
+                modifiedSeconds: info.st_mtimespec.tv_sec, modifiedNanoseconds: info.st_mtimespec.tv_nsec,
+                changedSeconds: info.st_ctimespec.tv_sec, changedNanoseconds: info.st_ctimespec.tv_nsec)
+            images.append(Entry(url: url.resolvingSymlinksInPath().standardizedFileURL,
+                created: values.creationDate ?? .distantPast, candidate: tagged, revision: revision))
+        }
+        if let readError { throw readError }
+        return images.sorted { $0.created == $1.created ? $0.url.path < $1.url.path : $0.created < $1.created }
     }
 }

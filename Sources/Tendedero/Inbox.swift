@@ -1,81 +1,172 @@
 import Foundation
 
-/// Inbox mode: Tendedero takes over where screenshots go.
-///
-/// It changes two macOS screenshot settings, the same ones in the Options
-/// menu of Cmd+Shift+5: the floating thumbnail is turned off, so the file is
-/// written at once instead of five seconds later, and the save location
-/// becomes Tendedero's own folder, so the Desktop only gets what you keep.
-///
-/// The previous values are saved first and put back when the mode is turned
-/// off or the app quits, so macOS is never left pointing at a folder nobody
-/// is watching.
-enum Inbox {
-    private static let domain = "com.apple.screencapture" as CFString
-    /// macOS 26 and earlier read "location". macOS 27 reads
-    /// "location-screenshot" and ignores the old key, so both are written.
-    private static let locationKey = "location" as CFString
-    private static let screenshotLocationKey = "location-screenshot" as CFString
-    private static let thumbnailKey = "show-thumbnail" as CFString
+/// The three settings we borrow from macOS. Keeping this small boundary
+/// injectable lets tests exercise takeover without touching system preferences.
+protocol ScreenshotPreferences {
+    func read() -> [String: Any]
+    func write(_ values: [String: Any]) throws
+}
 
-    private static let enabledKey = "inboxEnabled"
-    private static let offeredKey = "inboxOffered"
-    private static let savedKey = "inboxSavedSettings"
+struct SystemScreenshotPreferences: ScreenshotPreferences {
+    private let domain = "com.apple.screencapture" as CFString
+    // macOS 27 uses location-screenshot; older versions use location.
+    private let keys = ["location": "location", "locationScreenshot": "location-screenshot",
+                        "thumbnail": "show-thumbnail"]
 
-    static let folder: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Tendedero/Screenshots", isDirectory: true)
-    }()
-
-    /// The user's choice, kept across launches.
-    static var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: enabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
-    }
-
-    /// Whether we already asked, so the offer appears only once.
-    static var wasOffered: Bool {
-        get { UserDefaults.standard.bool(forKey: offeredKey) }
-        set { UserDefaults.standard.set(newValue, forKey: offeredKey) }
-    }
-
-    /// Whether macOS is currently sending screenshots to our folder.
-    static var isApplied: Bool {
-        guard let current = CFPreferencesCopyAppValue(locationKey, domain) as? String else { return false }
-        return URL(fileURLWithPath: (current as NSString).expandingTildeInPath).standardizedFileURL
-            == folder.standardizedFileURL
-    }
-
-    static func apply() {
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        // Never save our own values as the "previous" ones, for example after
-        // a crash left them applied.
-        if !isApplied {
-            let saved: [String: Any] = [
-                "location": CFPreferencesCopyAppValue(locationKey, domain) as? String ?? NSNull(),
-                "locationScreenshot": CFPreferencesCopyAppValue(screenshotLocationKey, domain) as? String ?? NSNull(),
-                "thumbnail": CFPreferencesCopyAppValue(thumbnailKey, domain) as? Bool ?? NSNull(),
-            ]
-            UserDefaults.standard.set(saved.compactMapValues { $0 is NSNull ? nil : $0 }, forKey: savedKey)
-        }
-        set(locationKey, folder.path)
-        set(screenshotLocationKey, folder.path)
-        set(thumbnailKey, false)
-    }
-
-    static func restore() {
-        guard isApplied else { return }
-        let saved = UserDefaults.standard.dictionary(forKey: savedKey) ?? [:]
-        set(locationKey, saved["location"])
-        set(screenshotLocationKey, saved["locationScreenshot"])
-        set(thumbnailKey, saved["thumbnail"])
-        UserDefaults.standard.removeObject(forKey: savedKey)
-    }
-
-    /// Writes through cfprefsd, so the screenshot service sees it at once.
-    /// A nil value removes the key and returns it to the macOS default.
-    private static func set(_ key: CFString, _ value: Any?) {
-        CFPreferencesSetAppValue(key, value as CFPropertyList?, domain)
+    func read() -> [String: Any] {
         CFPreferencesAppSynchronize(domain)
+        return keys.compactMapValues { CFPreferencesCopyAppValue($0 as CFString, domain) }
+    }
+
+    func write(_ values: [String: Any]) throws {
+        for (name, key) in keys {
+            CFPreferencesSetAppValue(key as CFString, values[name] as CFPropertyList?, domain)
+        }
+        guard CFPreferencesAppSynchronize(domain) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+}
+
+/// Inbox mode borrows the screenshot location and floating-thumbnail setting.
+/// The selected folder is separate from the dedicated folder whose files the
+/// app owns. Changing a destination never gives us ownership of its contents.
+final class Inbox {
+    static let shared = Inbox()
+    static let defaultFolder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Tendedero/Screenshots", isDirectory: true)
+
+    private let defaults: UserDefaults
+    private let preferences: ScreenshotPreferences
+    private let defaultDestination: URL
+    private let enabledKey = "inboxEnabled"
+    private let offeredKey = "inboxOffered"
+    private let savedKey = "inboxSavedSettings"
+    private let appliedKey = "inboxAppliedSettings"
+    private let folderKey = "inboxFolder"
+
+    init(defaults: UserDefaults = .standard,
+         preferences: ScreenshotPreferences = SystemScreenshotPreferences(),
+         defaultFolder: URL = Inbox.defaultFolder) {
+        self.defaults = defaults
+        self.preferences = preferences
+        defaultDestination = defaultFolder
+    }
+
+    var folder: URL {
+        guard let path = defaults.string(forKey: folderKey) else { return defaultDestination }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    var isEnabled: Bool {
+        get { defaults.bool(forKey: enabledKey) }
+        set { defaults.set(newValue, forKey: enabledKey) }
+    }
+
+    var wasOffered: Bool {
+        get { defaults.bool(forKey: offeredKey) }
+        set { defaults.set(newValue, forKey: offeredKey) }
+    }
+
+    /// Only the built-in, dedicated folder has the original discard-to-Trash
+    /// behavior, even after switching destinations or restarting the app.
+    static func owns(_ url: URL, in dedicatedFolder: URL = defaultFolder) -> Bool {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+            .hasPrefix(dedicatedFolder.resolvingSymlinksInPath().standardizedFileURL.path + "/")
+    }
+
+    /// Check both reading and actually creating a file before changing any
+    /// preferences. Missing custom folders must not be silently recreated.
+    func validateFolder(_ url: URL) throws -> URL {
+        guard url.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
+        let url = url.resolvingSymlinksInPath().standardizedFileURL
+        let fm = FileManager.default
+        if url == defaultDestination.resolvingSymlinksInPath().standardizedFileURL {
+            try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+        guard values.isDirectory == true else { throw CocoaError(.fileReadUnsupportedScheme) }
+        _ = try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+        let probe = url.appendingPathComponent(".tendedero-write-check-\(UUID().uuidString)")
+        try Data().write(to: probe, options: .withoutOverwriting)
+        try fm.removeItem(at: probe)
+        return url
+    }
+
+    func selectFolder(_ url: URL) throws {
+        let destination = try validateFolder(url)
+        try selectValidatedFolder(destination)
+    }
+
+    /// Called only after asynchronous folder validation and watcher preparation.
+    func selectValidatedFolder(_ destination: URL) throws {
+        if isEnabled { try applyValidated(to: destination) }
+        defaults.set(destination.resolvingSymlinksInPath().standardizedFileURL.path, forKey: folderKey)
+    }
+
+    func apply(to destination: URL? = nil) throws {
+        let destination = try validateFolder(destination ?? folder)
+        try applyValidated(to: destination)
+    }
+
+    func applyValidated(to destination: URL) throws {
+        let before = preferences.read()
+        let saved = defaults.dictionary(forKey: savedKey)
+        // One snapshot for the whole takeover, not one per destination. An
+        // existing snapshot also survives a crash or an upgrade from v1.
+        if saved == nil { defaults.set(before, forKey: savedKey) }
+        let applied: [String: Any] = ["location": destination.path,
+                                      "locationScreenshot": destination.path, "thumbnail": false]
+        let previousApplied = defaults.dictionary(forKey: appliedKey)
+        // Persist recovery information before writing through cfprefsd.
+        defaults.set(applied, forKey: appliedKey)
+        do {
+            try preferences.write(applied)
+        } catch {
+            try preferences.write(before)
+            if let previousApplied { defaults.set(previousApplied, forKey: appliedKey) }
+            else { defaults.removeObject(forKey: appliedKey) }
+            if saved == nil { defaults.removeObject(forKey: savedKey) }
+            throw error
+        }
+    }
+
+    func restoredSettings() -> [String: Any] {
+        guard let saved = defaults.dictionary(forKey: savedKey) else { return preferences.read() }
+        // Older releases saved the snapshot but not their last write. They
+        // could only have written the built-in destination and false.
+        let applied = defaults.dictionary(forKey: appliedKey) ?? [
+            "location": defaultDestination.path, "locationScreenshot": defaultDestination.path,
+            "thumbnail": false,
+        ]
+        let before = preferences.read()
+        var restored = before
+        for (key, value) in applied {
+            // Compare each key independently: an external change to either
+            // location (or the thumbnail) belongs to the user and stays put.
+            if let current = before[key] as? NSObject, current.isEqual(value) {
+                restored[key] = saved[key]
+            }
+        }
+        return restored
+    }
+
+    func restore(expectedSettings: [String: Any]? = nil) throws {
+        guard defaults.dictionary(forKey: savedKey) != nil else { return }
+        let before = preferences.read()
+        let restored = restoredSettings()
+        // The replacement watcher was prepared asynchronously. If the user
+        // changed settings meanwhile, leave them alone and let them retry.
+        if let expectedSettings, !(restored as NSDictionary).isEqual(to: expectedSettings) {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        do {
+            try preferences.write(restored)
+        } catch {
+            try preferences.write(before)
+            throw error
+        }
+        defaults.removeObject(forKey: savedKey)
+        defaults.removeObject(forKey: appliedKey)
     }
 }

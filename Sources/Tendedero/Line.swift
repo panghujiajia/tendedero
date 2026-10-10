@@ -29,6 +29,43 @@ final class Line: ObservableObject {
     @Published var copiedID: UUID?
     @Published var draggingID: UUID?
     @Published var pressedID: UUID?
+    /// The photo under the pointer.
+    @Published var hoveredID: UUID? {
+        didSet { if oldValue != hoveredID { zoomPreview = nil; updateZoomPreview() } }
+    }
+    /// Only one expanded preview is retained; ordinary cards stay small.
+    @Published private(set) var zoomPreview: NSImage?
+
+    private func updateZoomPreview() {
+        guard zoomEnabled, let id = hoveredID,
+              let item = items.first(where: { $0.id == id && !$0.falling }) else { return }
+        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        zoomPreview = makeThumbnail(item.url, maxPixels: Int(ceil((Layout.cardWidth - 14) * Layout.maxZoom * scale)))
+    }
+
+    /// Photos grow in place while the pointer rests on them.
+    nonisolated static var zoomOnHover: Bool {
+        get { UserDefaults.standard.bool(forKey: "zoomOnHover") }
+        set { UserDefaults.standard.set(newValue, forKey: "zoomOnHover") }
+    }
+
+    var zoomEnabled: Bool { defaults.bool(forKey: "zoomOnHover") }
+
+    /// How large the zoomed photo is. Starts at the hover zoom, follows a
+    /// scroll over the photo, and goes back when the pointer leaves.
+    @Published var zoomLevel: CGFloat = Layout.zoom
+
+    func zoom(_ id: UUID, by amount: CGFloat) {
+        guard zoomEnabled else { return }
+        hoveredID = id
+        zoomLevel = min(Layout.maxZoom, max(1, zoomLevel * (1 + amount)))
+    }
+
+    /// The photo shown zoomed: the hovered one, unless it is being dragged.
+    var zoomedID: UUID? {
+        guard zoomEnabled, draggingID == nil else { return nil }
+        return items.first(where: { $0.id == hoveredID && !$0.falling && !$0.flying })?.id
+    }
     /// Whether the line has slid down into view.
     @Published var revealed = false
 
@@ -38,25 +75,58 @@ final class Line: ObservableObject {
 
     var maxItems = 8
 
+    var peeksAtNew: Bool {
+        get { !defaults.bool(forKey: "quietHang") }
+        set { defaults.set(!newValue, forKey: "quietHang") }
+    }
+
+    /// Emitted after acceptance and persistence, even when eviction keeps the count flat.
+    var onCapture: ((_ shouldPeek: Bool) -> Void)?
 
     var soundOn: Bool {
-        get { !UserDefaults.standard.bool(forKey: "soundOff") }
-        set { UserDefaults.standard.set(!newValue, forKey: "soundOff") }
+        get { !defaults.bool(forKey: "soundOff") }
+        set { defaults.set(!newValue, forKey: "soundOff") }
     }
 
     var liveCount: Int { items.filter { !$0.falling }.count }
 
     private let storeKey = "pegged"
 
-    init() {
+    private let defaults: UserDefaults
+    private let dedicatedFolder: URL
+    private let clipboardFolder: URL
+
+    init(defaults: UserDefaults = .standard, dedicatedFolder: URL = Inbox.defaultFolder,
+         clipboardFolder: URL = ClipboardWatcher.folder) {
+        self.defaults = defaults
+        self.dedicatedFolder = dedicatedFolder
+        self.clipboardFolder = clipboardFolder
         restore()
         scheduleGust()
+    }
+
+    func cardX(at index: Int, width: CGFloat) -> CGFloat {
+        let zoomIndex = zoomedID.flatMap { id in items.firstIndex { $0.id == id } }
+        let push = zoomIndex.map { Layout.push(for: items[$0].thumb.size, zoom: zoomLevel) } ?? 0
+        let shift = zoomIndex.map { index < $0 ? -push : (index > $0 ? push : 0) } ?? 0
+        return Layout.x(index: index, count: items.count, width: width) + shift
+    }
+
+    /// Same zoom, neighbour displacement and rope position as LineView.
+    func cardFrame(for id: UUID, in panel: CGRect) -> CGRect? {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        let x = cardX(at: index, width: panel.width)
+        let top = Layout.ropeY(x: x, width: panel.width) - Layout.pinAbove + PeggedView.cardOffsetBelowTop
+        let size = PeggedView.cardSize(for: items[index].thumb.size, zoom: zoomedID == id ? zoomLevel : 1)
+        return CGRect(x: panel.minX + x - size.width / 2, y: panel.maxY - top - size.height,
+                      width: size.width, height: size.height)
     }
 
     // MARK: Hanging and dropping
 
     @discardableResult
     func hang(_ url: URL, quietly: Bool = false, flying: Bool = false) -> UUID? {
+        let url = url.resolvingSymlinksInPath().standardizedFileURL
         guard !items.contains(where: { $0.url == url && !$0.falling }),
               let thumb = makeThumbnail(url) else { return nil }
         var item = Pegged(url: url, thumb: thumb)
@@ -67,7 +137,10 @@ final class Line: ObservableObject {
             drop(oldest.id, quietly: true)
         }
         save()
-        if !quietly { play("Tink", volume: 0.35) }
+        if !quietly {
+            onCapture?(peeksAtNew)
+            play("Tink", volume: 0.35)
+        }
         return item.id
     }
 
@@ -85,6 +158,7 @@ final class Line: ObservableObject {
         guard let i = items.firstIndex(where: { $0.id == id }), !items[i].falling else { return }
         onFall?(items[i])
         items[i].falling = true
+        if hoveredID == id { hoveredID = nil }
         hitRects[id] = nil
         save()
         if !quietly { play("Pop", volume: 0.25) }
@@ -113,12 +187,7 @@ final class Line: ObservableObject {
 
     func copy(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
-        let entry = NSPasteboardItem()
-        if let png = pngData(item.url) { entry.setData(png, forType: .png) }
-        entry.setString(item.url.absoluteString, forType: .fileURL)
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.writeObjects([entry])
+        guard ClipboardImage.copy(item.url) else { return }
 
         copiedID = id
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
@@ -156,7 +225,7 @@ final class Line: ObservableObject {
     /// Files anywhere else, like the Desktop, stay where they are.
     func isInInbox(_ id: UUID) -> Bool {
         guard let item = items.first(where: { $0.id == id }) else { return false }
-        return item.url.standardizedFileURL.path.hasPrefix(Inbox.folder.standardizedFileURL.path + "/")
+        return Inbox.owns(item.url, in: dedicatedFolder) || Inbox.owns(item.url, in: clipboardFolder)
     }
 
     /// The corner cross and "Take down" both end up here.
@@ -201,6 +270,7 @@ final class Line: ObservableObject {
         guard let i = items.firstIndex(where: { $0.url == url && !$0.falling }),
               let thumb = makeThumbnail(url) else { return }
         items[i].thumb = thumb
+        if items[i].id == hoveredID { updateZoomPreview() }
     }
 
     func reveal(_ id: UUID) {
@@ -224,13 +294,16 @@ final class Line: ObservableObject {
 
     private func save() {
         let paths = items.filter { !$0.falling }.map(\.url.path)
-        UserDefaults.standard.set(paths, forKey: storeKey)
+        defaults.set(paths, forKey: storeKey)
     }
 
     private func restore() {
-        let paths = UserDefaults.standard.stringArray(forKey: storeKey) ?? []
+        let paths = defaults.stringArray(forKey: storeKey) ?? []
         for path in paths where FileManager.default.fileExists(atPath: path) {
-            hang(URL(fileURLWithPath: path), quietly: true)
+            // The screen's capacity is not known yet; hang would truncate to eight.
+            let url = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+            guard !items.contains(where: { $0.url == url }), let thumb = makeThumbnail(url) else { continue }
+            items.append(Pegged(url: url, thumb: thumb))
         }
     }
 
@@ -242,21 +315,4 @@ final class Line: ObservableObject {
         sound.play()
     }
 
-    private func pngData(_ url: URL) -> Data? {
-        if url.pathExtension.lowercased() == "png" { return try? Data(contentsOf: url) }
-        guard let tiff = NSImage(contentsOf: url)?.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
-    }
-}
-
-func makeThumbnail(_ url: URL, maxPixels: Int = 480) -> NSImage? {
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-    let options: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: maxPixels,
-    ]
-    guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-    return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
 }

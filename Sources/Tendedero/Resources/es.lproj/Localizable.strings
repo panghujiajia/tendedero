@@ -2,20 +2,20 @@
 
 /* AppDelegate */
 "Let Tendedero handle your screenshots?" = "¿Quieres que Tendedero se encargue de tus capturas?";
-"Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Tendedero quits." = "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Tendedero.";
 "Turn on" = "Activar";
 "Not now" = "Ahora no";
 "Hide line" = "Ocultar tendedero";
 "Show line" = "Mostrar tendedero";
 "Take everything down" = "Descolgar todo";
 "Handle screenshots" = "Encargarse de las capturas";
-"Screenshots hang instantly and skip the Desktop" = "Las capturas se cuelgan al instante y no pasan por el Escritorio";
 "Open screenshots folder" = "Abrir carpeta de capturas";
 "Sounds" = "Sonidos";
 "Open at login" = "Abrir al iniciar sesión";
 "Quit Tendedero" = "Salir de Tendedero";
 "Could not change the login setting" = "No se pudo cambiar el inicio de sesión";
 "Move Tendedero to the Applications folder and try again." = "Mueve Tendedero a la carpeta Aplicaciones y vuelve a intentarlo.";
+"Zoom on hover" = "Ampliar al pasar el puntero";
+"Rest the pointer on a photo to see it larger" = "Deja el puntero sobre una foto para verla en grande";
 
 /* GrabArea */
 "Copy" = "Copiar";
@@ -32,3 +32,18 @@
 
 /* PeggedView */
 "Copied" = "Copiado";
+"Choose" = "Elegir";
+"Choose an available folder you can read and write to, then try again." = "Elige una carpeta disponible con permisos de lectura y escritura e inténtalo de nuevo.";
+"Choose screenshots folder" = "Elegir carpeta de capturas";
+"Choose screenshots folder…" = "Elegir carpeta de capturas…";
+"Could not use the screenshots folder" = "No se pudo usar la carpeta de capturas";
+"Hang copied images" = "Colgar imágenes copiadas";
+"Hang images you copy too?" = "¿Colgar también las imágenes que copies?";
+"Images you copy hang on the line too" = "Las imágenes que copies también se cuelgan";
+"Images you copy, like a screenshot taken with Control held or Copy Image in a browser, will hang on the line as well. Tendedero only keeps images, never text, and skips anything a password manager marks as private. You can change this from the menu bar." = "Las imágenes que copies, como una captura hecha manteniendo Control o Copiar imagen en el navegador, también se colgarán. Tendedero solo guarda imágenes, nunca texto, y omite lo que un gestor de contraseñas marque como privado. Puedes cambiarlo desde la barra de menús.";
+"New screenshots will be saved here while Handle screenshots is on. Existing files stay where they are." = "Las nuevas capturas se guardarán aquí mientras Encargarse de las capturas esté activado. Los archivos existentes no se mueven.";
+"New screenshots will be saved in the chosen folder and hang instantly, without the floating thumbnail. The cross moves files in Tendedero’s own folder to the Trash; in other folders, it only takes them down. You can turn this off from the menu bar, and your previous settings come back when Tendedero quits." = "Las nuevas capturas se guardarán en la carpeta elegida y se colgarán al instante, sin la miniatura flotante. La cruz envía a la Papelera los archivos de la carpeta propia de Tendedero; en otras carpetas, solo los descuelga. Puedes desactivarlo desde la barra de menús, y tus ajustes anteriores se restauran al salir de Tendedero.";
+"Save new screenshots to the chosen folder and hang them instantly" = "Guardar nuevas capturas en la carpeta elegida y colgarlas al instante";
+"Show new items" = "Mostrar lo nuevo";
+"The line comes down for a moment when something new hangs" = "La cuerda baja un momento cuando se cuelga algo nuevo";
+"Use default screenshots folder" = "Usar carpeta de capturas predeterminada";

@@ -28,7 +28,7 @@ struct GrabArea: NSViewRepresentable {
         let id = item.id
         let line = line
         view.url = item.url
-        view.dragImage = item.thumb
+        view.dragImage = line.zoomedID == id ? (line.zoomPreview ?? item.thumb) : item.thumb
         view.onClick = { line.copy(id) }
         view.onDoubleClick = { line.open(id) }
         view.onDragStart = { line.draggingID = id }

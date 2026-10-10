@@ -13,6 +13,7 @@ struct PeggedView: View {
     private var copied: Bool { line.copiedID == item.id }
     private var dragging: Bool { line.draggingID == item.id }
     private var pressed: Bool { line.pressedID == item.id }
+    private var zoomed: Bool { line.zoomedID == item.id }
 
     var body: some View {
         VStack(spacing: -12) {
@@ -35,26 +36,26 @@ struct PeggedView: View {
 
     /// The photo fits inside the card area keeping its proportions, so the
     /// white border hugs it whether the screenshot is wide or tall.
-    static func photoSize(for size: CGSize) -> CGSize {
-        let maxW = Layout.cardWidth - 14, maxH: CGFloat = 104
+    static func photoSize(for size: CGSize, zoom: CGFloat = 1) -> CGSize {
+        let maxW = (Layout.cardWidth - 14) * zoom, maxH: CGFloat = 104 * zoom
         guard size.width > 0, size.height > 0 else { return CGSize(width: maxW, height: maxH) }
         let scale = min(maxW / size.width, maxH / size.height)
         return CGSize(width: size.width * scale, height: size.height * scale)
     }
 
     /// The card around the photo: the photo plus the glass inset.
-    static func cardSize(for size: CGSize) -> CGSize {
-        let p = photoSize(for: size)
+    static func cardSize(for size: CGSize, zoom: CGFloat = 1) -> CGSize {
+        let p = photoSize(for: size, zoom: zoom)
         return CGSize(width: p.width + Frame.inset * 2, height: p.height + Frame.inset * 2)
     }
 
     /// Distance from the top of the hanging view (the clip) to the card.
     static let cardOffsetBelowTop: CGFloat = 26 - 12
 
-    private var photoSize: CGSize { Self.photoSize(for: item.thumb.size) }
+    private var photoSize: CGSize { Self.photoSize(for: item.thumb.size, zoom: zoomed ? line.zoomLevel : 1) }
 
     private var card: some View {
-        Image(nsImage: item.thumb)
+        Image(nsImage: zoomed ? (line.zoomPreview ?? item.thumb) : item.thumb)
             .resizable()
             .interpolation(.high)
             .frame(width: photoSize.width, height: photoSize.height)
@@ -67,10 +68,12 @@ struct PeggedView: View {
             )
             .padding(Frame.inset)
             .glassFrame(cornerRadius: Frame.radius)
+            // The card really grows, so clicks, drags and the cross work all over it.
+            .animation(.spring(response: 0.34, dampingFraction: 0.78), value: zoomed)
             .shadow(color: .black.opacity(hovering ? 0.26 : 0.18), radius: hovering ? 14 : 10, y: hovering ? 8 : 5)
             // Holding presses the photo in slowly, so a long press feels like
             // it is building up to something.
-            .scaleEffect(pressed ? 0.95 : (hovering ? 1.035 : 1), anchor: .top)
+            .scaleEffect(pressed ? 0.95 : (hovering && !Line.zoomOnHover ? 1.035 : 1), anchor: .top)
             .animation(pressed ? .easeInOut(duration: 0.45) : .spring(response: 0.3, dampingFraction: 0.6), value: pressed)
             .opacity(dragging ? 0.45 : 1)
             .overlay(alignment: .topLeading) {
@@ -100,11 +103,19 @@ struct PeggedView: View {
             }
             .animation(.easeOut(duration: 0.18), value: hovering)
             .animation(.easeOut(duration: 0.2), value: copied)
-            .onHover { hovering = $0 }
+            .onHover { inside in
+                hovering = inside
+                if inside {
+                    line.hoveredID = item.id
+                } else if line.hoveredID == item.id {
+                    line.hoveredID = nil
+                    line.zoomLevel = Layout.zoom
+                }
+            }
             .background(
                 GeometryReader { g in
                     Color.clear.preference(key: HitRectsKey.self,
-                                           value: item.falling ? [:] : [item.id: g.frame(in: .global)])
+                                           value: item.falling || item.flying ? [:] : [item.id: g.frame(in: .global)])
                 }
             )
     }

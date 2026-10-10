@@ -18,7 +18,7 @@
 ## Out of sight. Within reach.
 
 Every screenshot you take hangs on a line just above your screen.
-Rest the pointer in the menu bar and it glides down. Move away and it's gone.
+Rest the pointer against the top edge and it glides down. Move away and it's gone.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/demo-dark.gif">
@@ -46,7 +46,9 @@ Rest the pointer in the menu bar and it glides down. Move away and it's gone.
 | Drag into an app | Send a copy. It stays on the line. |
 | Drag into a folder | Keep it there. It leaves the line. |
 | Drag to the Trash, or click the cross | Let it go. |
-| Rest the pointer in the menu bar | Bring the line down on that screen. |
+| Rest the pointer on a photo<sup>2</sup> | Zoom it in place. Its neighbours step aside. |
+| Scroll over a zoomed photo<sup>2</sup> | Zoom further in or back out. |
+| Rest the pointer against the top edge | Bring the line down on that screen. |
 | Click anything in the menu bar | Put it away. |
 | <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>T</kbd> | Show or hide the line. |
 
@@ -97,6 +99,16 @@ like any other app.
 
 <br>
 
+## Local integration settings
+
+**Choose screenshots folder…** selects a destination; **Use default screenshots folder** resets it. With **Handle screenshots** off, selection only saves the preference. With it on, the app checks access, prepares the new watcher, then changes the system screenshot location. Existing images are neither moved nor imported. Failure or cancellation preserves the previous setting and watcher. The first settings snapshot survives repeated switches; external changes are preserved when settings are restored.
+
+The cross only takes files down in custom folders. Files in Tendedero’s dedicated screenshots or clipboard folder can be discarded to the Trash; **Move to Trash** remains an explicit action for other files. **Hang copied images** is off by default, ignores privacy markers and the app’s own copies, and hangs Finder image files in place. Generated clipboard images use a separate private folder.
+
+**Show new items** is on by default. Turn it off to hang captures without automatically revealing the line. **Zoom on hover** is off by default; only the hovered photo receives a larger preview. Copying, dragging and saving keep the original resolution. On vertically stacked screens, the menu bar remains a trigger where the upper display prevents the pointer from stopping at the edge.
+
+Run isolated regression tests with `scripts/test.sh`. Tests use scratch directories, independent defaults and named test pasteboards; they do not launch the app or change screenshot settings. Five tests that display animation windows require explicit opt-in with `TENDEDERO_UI_TESTS=1 scripts/test.sh`. See [integration details](docs/integration.md) for selected PRs and verification limits.
+
 ## Build from source
 
 ```sh
@@ -140,7 +152,9 @@ language. `swift scripts/check-strings.swift` checks that none is missing.
 ---
 
 <sub>
-1. On first launch, Tendedero offers to handle your screenshots. If you accept, it turns off the floating thumbnail and saves new screenshots to its own folder, two settings also found under Options in Cmd+Shift+5. Your previous settings are saved and restored when Tendedero quits or the option is turned off from the menu bar. Tendedero hides automatically while an app is in full screen.
+1. On first launch, Tendedero offers to handle your screenshots. If you accept, it turns off the floating thumbnail and saves new screenshots to the chosen folder (the app’s own folder by default), two settings also found under Options in Cmd+Shift+5. Your previous settings are saved and restored when Tendedero quits or the option is turned off from the menu bar. Tendedero hides automatically while an app is in full screen.
+<br>
+2. With Zoom on hover turned on from the menu bar. It is off by default.
 </sub>
 
 <br>

@@ -20,7 +20,7 @@
 ## Fuera de la vista. Siempre a mano.
 
 Cada captura que haces queda colgada en una cuerda justo encima de la pantalla.
-Lleva el puntero a la barra de menús y la cuerda baja. Apártalo y desaparece.
+Lleva el puntero hasta el borde superior y la cuerda baja. Apártalo y desaparece.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../images/es/demo-dark.gif">
@@ -48,7 +48,9 @@ Lleva el puntero a la barra de menús y la cuerda baja. Apártalo y desaparece.
 | Arrastrar a una app | Envía una copia, y la captura sigue colgada. |
 | Arrastrar a una carpeta | Se queda ahí y sale de la cuerda. |
 | Arrastrar a la Papelera o hacer clic en la cruz | Te deshaces de ella. |
-| Dejar el puntero en la barra de menús | Baja la cuerda en esa pantalla. |
+| Dejar el puntero sobre una foto<sup>2</sup> | Se amplía en su sitio y las de al lado se apartan. |
+| Desplazar sobre una foto ampliada<sup>2</sup> | La amplía más o menos. |
+| Dejar el puntero contra el borde superior | Baja la cuerda en esa pantalla. |
 | Hacer clic en cualquier sitio de la barra de menús | Recoge la cuerda. |
 | <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>T</kbd> | Muestra u oculta la cuerda. |
 
@@ -99,6 +101,16 @@ abre como cualquier otra app.
 
 <br>
 
+## Ajustes de la integración local
+
+**Elegir carpeta de capturas…** selecciona el destino; **Usar carpeta de capturas predeterminada** lo restablece. Con **Encargarse de las capturas** desactivado, solo se guarda la selección. Al activarlo, se comprueba el acceso y se prepara la vigilancia antes de cambiar el destino del sistema. No se mueven ni importan imágenes existentes. Los errores o la cancelación conservan la configuración anterior. Los cambios sucesivos conservan la primera copia de los ajustes; al restaurarlos se respetan los cambios externos.
+
+La cruz solo descuelga archivos de carpetas personalizadas. Los archivos de las carpetas propias de capturas y portapapeles pueden descartarse a la Papelera; **Mover a la Papelera** sigue disponible para otros archivos. **Colgar imágenes copiadas** viene desactivado, respeta las marcas privadas y omite las copias de la propia app. Los archivos de Finder se cuelgan en su ubicación original; las imágenes generadas usan una carpeta propia separada.
+
+**Mostrar lo nuevo** viene activado y se puede desactivar. **Ampliar al pasar el puntero** viene desactivado; solo la foto ampliada carga una vista previa mayor. Copiar, arrastrar y guardar conserva la resolución original. Con pantallas apiladas, la barra de menús permite activar la cuerda donde el puntero puede pasar a la pantalla superior.
+
+Las pruebas aisladas se ejecutan con `scripts/test.sh`. No abren la app ni cambian los ajustes de capturas. Cinco pruebas que muestran ventanas requieren `TENDEDERO_UI_TESTS=1 scripts/test.sh`. Véase el [registro de integración](../integration.md).
+
 ## Compilar desde el código
 
 ```sh
@@ -145,7 +157,9 @@ Las traducciones están en `Sources/Tendedero/Resources`, con una carpeta
 ---
 
 <sub>
-1. La primera vez que lo abres, Tendedero te ofrece encargarse de tus capturas. Si aceptas, desactiva la miniatura flotante y guarda las capturas nuevas en su propia carpeta; son dos ajustes que también encontrarás en Opciones de Cmd+Mayús+5. Tus ajustes anteriores se guardan y vuelven a su sitio al cerrar Tendedero o al desactivar la opción desde la barra de menús. Mientras una app está a pantalla completa, Tendedero se oculta solo.
+1. La primera vez que lo abres, Tendedero te ofrece encargarse de tus capturas. Si aceptas, desactiva la miniatura flotante y guarda las capturas nuevas en la carpeta elegida (por defecto, la propia); son dos ajustes que también encontrarás en Opciones de Cmd+Mayús+5. Tus ajustes anteriores se guardan y vuelven a su sitio al cerrar Tendedero o al desactivar la opción desde la barra de menús. Mientras una app está a pantalla completa, Tendedero se oculta solo.
+<br>
+2. Con Ampliar al pasar el puntero activado desde la barra de menús. Viene desactivado.
 </sub>
 
 <br>
