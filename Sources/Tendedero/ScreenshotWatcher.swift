@@ -39,13 +39,14 @@ final class ScreenshotWatcher {
 
     init(folder: URL? = nil, startedAt: Date = Date(),
          retryPolicy: RetryPolicy = RetryPolicy(),
-         listing: @escaping @Sendable (URL) throws -> [Entry] = { try ScreenshotWatcher.list($0) },
+         anyImage: Bool = false, recordings: Bool = false,
+         listing: (@Sendable (URL) throws -> [Entry])? = nil,
          onNew: @escaping (URL) -> Bool, onChange: @escaping () -> Void) {
         self.folder = (folder ?? Self.screenshotFolder()).resolvingSymlinksInPath().standardizedFileURL
         launchDate = startedAt
         self.onNew = onNew
         self.onChange = onChange
-        self.listing = listing
+        self.listing = listing ?? { try Self.list($0, anyImage: anyImage, recordings: recordings) }
         self.retryPolicy = retryPolicy
     }
 
@@ -237,22 +238,22 @@ final class ScreenshotWatcher {
         let changedNanoseconds: Int
     }
 
-    nonisolated static func list(_ folder: URL) throws -> [Entry] {
+    nonisolated static func list(_ folder: URL, anyImage: Bool = false, recordings: Bool = false) throws -> [Entry] {
         let fm = FileManager.default
         var readError: Error?
         guard let iterator = fm.enumerator(at: folder, includingPropertiesForKeys: [.creationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants], errorHandler: { _, error in
                 readError = error; return false
             }) else { throw CocoaError(.fileReadNoPermission) }
-        let taggedOnly = folder == desktop.resolvingSymlinksInPath().standardizedFileURL
+        let taggedOnly = !anyImage && folder == desktop.resolvingSymlinksInPath().standardizedFileURL
         var images: [Entry] = []
         while let url = autoreleasepool(invoking: { iterator.nextObject() as? URL }) {
-            guard imageExtensions.contains(url.pathExtension.lowercased()) else { continue }
+            guard imageExtensions.contains(url.pathExtension.lowercased()) || (recordings && isRecordingFile(url)) else { continue }
             let values = try url.resourceValues(forKeys: [.creationDateKey, .isRegularFileKey])
             guard values.isRegularFile == true else { continue }
             var info = stat()
             guard stat(url.path, &info) == 0 else { continue }
-            let tagged = !taggedOnly || url.withUnsafeFileSystemRepresentation { path in
+            let tagged = !taggedOnly || (recordings && isRecordingFile(url)) || url.withUnsafeFileSystemRepresentation { path in
                 guard let path else { return false }
                 return getxattr(path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) >= 0
             }

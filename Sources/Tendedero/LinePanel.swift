@@ -1,8 +1,8 @@
 import AppKit
 
 /// A transparent strip along the top of the screen that floats over every
-/// app and every Space except full screen ones, never takes focus, and lets clicks pass through
-/// everywhere except over the photos.
+/// app without taking focus. AppDelegate decides whether full screen Spaces
+/// may show it; clicks pass through outside photos and the history strip.
 final class LinePanel: NSPanel {
     init(content: NSView) {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
@@ -11,9 +11,8 @@ final class LinePanel: NSPanel {
         backgroundColor = .clear
         hasShadow = false
         level = .floating
-        // Every Space except full screen ones: a video or a presentation in full
-        // screen should never get a clothesline across the top.
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // Full screen participation is opt-in through AppDelegate.refresh().
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         hidesOnDeactivate = false
         isMovable = false
         becomesKeyOnlyIfNeeded = true

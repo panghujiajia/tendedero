@@ -10,6 +10,12 @@ private func CGSMainConnectionID() -> Int32
 private func CGSCopyManagedDisplaySpaces(_ connection: Int32) -> CFArray
 
 enum FullScreen {
+    static var showLineOver: Bool {
+        get { UserDefaults.standard.bool(forKey: "showOverFullScreen") }
+        set { UserDefaults.standard.set(newValue, forKey: "showOverFullScreen") }
+    }
+    static func blocksLine(on screen: NSScreen) -> Bool { !showLineOver && isActive(on: screen) }
+
     private static let fullScreenSpaceType = 4
 
     /// True when the given screen is currently showing a full screen app,

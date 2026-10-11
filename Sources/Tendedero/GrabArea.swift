@@ -40,24 +40,29 @@ struct GrabArea: NSViewRepresentable {
         view.onTrash = { line.trash(id) }
         view.onDiscard = { line.discard(id) }
         view.onLongPress = { line.markup(id) }
+        view.onForceClick = { line.quickLook(id) }
         view.onPressChange = { pressed in line.pressedID = pressed ? id : nil }
         view.menuProvider = {
             let menu = NSMenu()
+            menu.autoenablesItems = false
             menu.addItem(ClosureMenuItem(L("Copy")) { line.copy(id) })
             menu.addItem(ClosureMenuItem(L("Open")) { line.open(id) })
-            menu.addItem(ClosureMenuItem(L("Markup")) { line.markup(id) })
+            menu.addItem(ClosureMenuItem(L("Quick Look")) { line.quickLook(id) })
+            menu.addItem(ClosureMenuItem(item.isRecording ? L("Trim a copy…") : L("Markup")) { line.markup(id) })
             menu.addItem(ClosureMenuItem(L("Show in Finder")) { line.reveal(id) })
             let inInbox = line.isInInbox(id)
             if inInbox {
                 menu.addItem(ClosureMenuItem(L("Save to Desktop")) { line.saveToDesktop(id) })
             }
             menu.addItem(.separator())
-            if inInbox {
-                menu.addItem(ClosureMenuItem(L("Discard")) { line.discard(id) })
-            } else {
-                menu.addItem(ClosureMenuItem(L("Take down")) { line.discard(id) })
-                menu.addItem(ClosureMenuItem(L("Move to Trash")) { line.trash(id) })
-            }
+            menu.addItem(ClosureMenuItem(L("Take down")) { line.drop(id) })
+            menu.addItem(ClosureMenuItem(L("Move to Trash")) { line.trash(id) })
+            let left = ClosureMenuItem(L("Take down everything to the left")) { line.takeDown(id, toTheLeft: true) }
+            left.isEnabled = !line.neighbours(of: id, toTheLeft: true).isEmpty
+            menu.addItem(left)
+            let right = ClosureMenuItem(L("Take down everything to the right")) { line.takeDown(id, toTheLeft: false) }
+            right.isEnabled = !line.neighbours(of: id, toTheLeft: false).isEmpty
+            menu.addItem(right)
             return menu
         }
     }
@@ -65,6 +70,7 @@ struct GrabArea: NSViewRepresentable {
 
 final class GrabView: NSView, NSDraggingSource {
     static var isDragging = false
+    static var isShowingMenu = false
 
     var url: URL?
     var dragImage: NSImage?
@@ -75,6 +81,7 @@ final class GrabView: NSView, NSDraggingSource {
     var onTrash: () -> Void = {}
     var onDiscard: () -> Void = {}
     var onLongPress: () -> Void = {}
+    var onForceClick: () -> Void = {}
     var onPressChange: (Bool) -> Void = { _ in }
     var menuProvider: () -> NSMenu = { NSMenu() }
 
@@ -132,6 +139,13 @@ final class GrabView: NSView, NSDraggingSource {
         onPressChange(false)
     }
 
+    override func pressureChange(with event: NSEvent) {
+        guard event.stage == 2, downPoint != nil, !startedDrag, !didLongPress else { return }
+        didLongPress = true
+        endPress()
+        onForceClick()
+    }
+
     override func mouseDragged(with event: NSEvent) {
         guard let start = downPoint, !startedDrag, let url else { return }
         let p = event.locationInWindow
@@ -156,6 +170,8 @@ final class GrabView: NSView, NSDraggingSource {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        Self.isShowingMenu = true
+        defer { Self.isShowingMenu = false }
         NSMenu.popUpContextMenu(menuProvider(), with: event, for: self)
     }
 

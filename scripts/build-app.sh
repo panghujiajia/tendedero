@@ -76,6 +76,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Tendedero watches the folder you chose so it can hang new images and recordings.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Tendedero watches the folder you chose so it can hang new images and recordings.</string>
   <key>NSDesktopFolderUsageDescription</key>
   <string>Tendedero watches the folder where macOS saves your screenshots so it can hang them on the line.</string>
 </dict>

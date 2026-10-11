@@ -125,7 +125,7 @@ final class InboxTests: TestFiles {
     }
 
     @Test func testEachExternallyChangedKeySurvivesRestore() throws {
-        for changed in ["location", "locationScreenshot", "thumbnail"] {
+        for changed in ["location", "locationScreenshot", "locationRecording", "target", "targetScreenshot", "targetRecording", "thumbnail"] {
             let original: [String: Any] = ["location": "/original-legacy", "locationScreenshot": "/original-modern", "thumbnail": false]
             system.values = original
             try inbox.apply()
@@ -139,7 +139,7 @@ final class InboxTests: TestFiles {
     }
 
     @Test func testExternallyRemovedKeysStayRemoved() throws {
-        for key in ["location", "locationScreenshot", "thumbnail"] {
+        for key in ["location", "locationScreenshot", "locationRecording", "target", "targetScreenshot", "targetRecording", "thumbnail"] {
             let original: [String: Any] = ["location": "/old", "locationScreenshot": "/old", "thumbnail": true]
             system.values = original
             try inbox.apply()

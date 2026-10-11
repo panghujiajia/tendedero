@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -6,6 +7,16 @@ import UniformTypeIdentifiers
 /// largest connected display's scale so moving the line never needs a reload.
 @MainActor
 func makeThumbnail(_ url: URL, maxPixels: Int? = nil) -> NSImage? {
+    if isRecordingFile(url) {
+        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        let budget = maxPixels ?? Int(ceil((Layout.cardWidth - 14) * scale))
+        guard budget > 0 else { return nil }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: budget, height: budget)
+        guard let image = try? generator.copyCGImage(at: .zero, actualTime: nil) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
     let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
     guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
     let budget: Int
@@ -21,7 +32,7 @@ func makeThumbnail(_ url: URL, maxPixels: Int? = nil) -> NSImage? {
         if (5...8).contains(orientation) { swap(&width, &height) }
         let maxWidth = Layout.cardWidth - 14
         if width > 0, height > 0 {
-            let fit = min(maxWidth / width, 104 / height)
+            let fit = min(maxWidth / width, Layout.photoMaxHeight / height)
             budget = max(1, Int(ceil(max(width, height) * fit * scale)))
         } else {
             budget = max(1, Int(ceil(maxWidth * scale)))
@@ -109,4 +120,8 @@ private func writeAtomically(to target: URL, write: (URL) throws -> Void) throws
     } else {
         try fm.moveItem(at: temporary, to: target)
     }
+}
+
+func isRecordingFile(_ url: URL) -> Bool {
+    ["mov", "mp4"].contains(url.pathExtension.lowercased())
 }

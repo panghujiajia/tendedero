@@ -14,6 +14,7 @@ struct Pegged: Identifiable, Equatable {
     var falling = false
     /// Still flying in from where it was captured; the card waits hidden.
     var flying = false
+    var isRecording: Bool { isRecordingFile(url) }
 
     static func == (a: Pegged, b: Pegged) -> Bool {
         a.id == b.id && a.falling == b.falling && a.flying == b.flying && a.thumb === b.thumb
@@ -74,6 +75,31 @@ final class Line: ObservableObject {
     var hitRects: [UUID: CGRect] = [:]
 
     var maxItems = 8
+    var visibleCount = 8
+    @Published private(set) var scroll: CGFloat = 0
+    static let keepChoices = [25, 50, 100]
+    var keepOnLine: Int? {
+        get { let n = defaults.integer(forKey: "keepOnLine"); return Self.keepChoices.contains(n) ? n : nil }
+        set { defaults.set(newValue.flatMap { Self.keepChoices.contains($0) ? $0 : nil }, forKey: "keepOnLine") }
+    }
+
+    func updateCapacity(width: CGFloat) {
+        visibleCount = max(3, min(12, Int(max(0, width - 200) / Layout.spacing)))
+        maxItems = max(visibleCount, keepOnLine ?? visibleCount)
+        scroll(by: 0)
+    }
+
+    func scroll(by delta: CGFloat) {
+        let limit = CGFloat(max(0, liveCount - visibleCount)) * Layout.spacing
+        scroll = min(limit, max(0, scroll + delta))
+    }
+
+    func trimToCapacity() {
+        while liveCount > maxItems, let oldest = items.first(where: { !$0.falling }) {
+            drop(oldest.id, quietly: true)
+        }
+        scroll = 0
+    }
 
     var peeksAtNew: Bool {
         get { !defaults.bool(forKey: "quietHang") }
@@ -109,7 +135,8 @@ final class Line: ObservableObject {
         let zoomIndex = zoomedID.flatMap { id in items.firstIndex { $0.id == id } }
         let push = zoomIndex.map { Layout.push(for: items[$0].thumb.size, zoom: zoomLevel) } ?? 0
         let shift = zoomIndex.map { index < $0 ? -push : (index > $0 ? push : 0) } ?? 0
-        return Layout.x(index: index, count: items.count, width: width) + shift
+        return Layout.x(index: index, count: items.count, width: width, visible: visibleCount,
+                        scroll: scroll, keepsHistory: keepOnLine != nil) + shift
     }
 
     /// Same zoom, neighbour displacement and rope position as LineView.
@@ -132,10 +159,9 @@ final class Line: ObservableObject {
         var item = Pegged(url: url, thumb: thumb)
         item.flying = flying
         items.append(item)
+        scroll = 0
         // A full line lets the oldest photo fall off the far end.
-        while liveCount > maxItems, let oldest = items.first(where: { !$0.falling }) {
-            drop(oldest.id, quietly: true)
-        }
+        trimToCapacity()
         save()
         if !quietly {
             onCapture?(peeksAtNew)
@@ -164,11 +190,25 @@ final class Line: ObservableObject {
         if !quietly { play("Pop", volume: 0.25) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.items.removeAll { $0.id == id }
+            self?.scroll(by: 0)
         }
     }
 
     func clear() {
+        takeDown(items.filter { !$0.falling })
+    }
+
+    func neighbours(of id: UUID, toTheLeft: Bool) -> [Pegged] {
         let live = items.filter { !$0.falling }
+        guard let index = live.firstIndex(where: { $0.id == id }) else { return [] }
+        return toTheLeft ? Array(live[..<index]) : Array(live.dropFirst(index + 1))
+    }
+
+    func takeDown(_ id: UUID, toTheLeft: Bool) {
+        takeDown(neighbours(of: id, toTheLeft: toTheLeft))
+    }
+
+    private func takeDown(_ live: [Pegged]) {
         for (n, item) in live.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06 * Double(n)) { [weak self] in
                 self?.drop(item.id, quietly: n > 0)
@@ -262,7 +302,8 @@ final class Line: ObservableObject {
     /// Long press: open the photo in the system Markup editor.
     func markup(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
-        Markup.shared.edit(item.url)
+        if item.isRecording { Trim.shared.edit(item.url, size: item.thumb.size) }
+        else { Markup.shared.edit(item.url) }
     }
 
     /// After editing, the photo on the line shows the new version.
@@ -271,6 +312,20 @@ final class Line: ObservableObject {
               let thumb = makeThumbnail(url) else { return }
         items[i].thumb = thumb
         if items[i].id == hoveredID { updateZoomPreview() }
+    }
+
+    var previewURLs: [URL] {
+        items.filter { !$0.falling && FileManager.default.fileExists(atPath: $0.url.path) }.map(\.url)
+    }
+
+    func quickLook(_ id: UUID) {
+        guard let item = items.first(where: { $0.id == id }),
+              let index = previewURLs.firstIndex(of: item.url) else { return }
+        QuickLook.shared.show(previewURLs, at: index)
+    }
+
+    func reloadThumbnails() {
+        for item in items where !item.falling { reloadThumbnail(for: item.url) }
     }
 
     func reveal(_ id: UUID) {

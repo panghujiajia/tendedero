@@ -32,6 +32,13 @@ final class ClipboardImage: NSObject, NSPasteboardItemDataProvider, @unchecked S
     @discardableResult
     static func copy(_ url: URL, to board: NSPasteboard = .general) -> Bool {
         let entry = NSPasteboardItem()
+        if isRecordingFile(url) {
+            entry.setString(url.absoluteString, forType: .fileURL)
+            entry.setString("1", forType: ClipboardWatcher.ownType)
+            board.clearContents()
+            current = nil
+            return board.writeObjects([entry])
+        }
         let provider = ClipboardImage(url: url, board: board)
         if let provider {
             entry.setDataProvider(provider, forTypes: [.png])

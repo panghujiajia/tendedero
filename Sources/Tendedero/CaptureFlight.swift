@@ -177,7 +177,7 @@ final class CaptureFlight {
             window.hasShadow = false
             window.ignoresMouseEvents = true
             window.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
-            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
             let host = NSView()
             host.wantsLayer = true
             host.layer = root

@@ -1,17 +1,26 @@
 import SwiftUI
 
 enum Layout {
-    static let baseHeight: CGFloat = 210
+    enum Size: String, CaseIterable {
+        case small, medium, large
+        var scale: CGFloat { switch self { case .small: 0.8; case .medium: 1; case .large: 1.35 } }
+    }
+    static var size: Size {
+        get { Size(rawValue: UserDefaults.standard.string(forKey: "lineSize") ?? "") ?? .medium }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "lineSize") }
+    }
+    static var photoMaxHeight: CGFloat { (104 * size.scale).rounded() }
+    static var baseHeight: CGFloat { photoMaxHeight + 106 }
     /// How much a photo grows while the pointer rests on it, and how far
     /// scrolling over it can take it.
     static let zoom: CGFloat = 2
     static let maxZoom: CGFloat = 3.5
     /// Zooming needs room below the cards. The extra strip is see through
     /// and lets clicks through, like the rest of the panel.
-    static var panelHeight: CGFloat { Line.zoomOnHover ? 470 : baseHeight }
+    static var panelHeight: CGFloat { Line.zoomOnHover ? max(baseHeight, photoMaxHeight * maxZoom + 106) : baseHeight }
     static let ropeTop: CGFloat = 10
-    static let spacing: CGFloat = 174
-    static let cardWidth: CGFloat = 150
+    static var spacing: CGFloat { cardWidth + 24 }
+    static var cardWidth: CGFloat { (150 * size.scale).rounded() }
     static let pinAbove: CGFloat = 9.5
 
     /// The rope hangs as a parabola from edge to edge of the screen.
@@ -19,7 +28,7 @@ enum Layout {
 
     static func ropeY(x: CGFloat, width: CGFloat) -> CGFloat {
         guard width > 0 else { return ropeTop }
-        let f = x / width
+        let f = min(1, max(0, x / width))
         return ropeTop + 4 * sag(width: width) * f * (1 - f)
     }
 
@@ -29,9 +38,21 @@ enum Layout {
         return max(0, zoomed / 2 + cardWidth / 2 + 14 - spacing)
     }
 
-    static func x(index: Int, count: Int, width: CGFloat) -> CGFloat {
-        let total = CGFloat(max(count - 1, 0)) * spacing
-        return width / 2 - total / 2 + CGFloat(index) * spacing
+    static func x(index: Int, count: Int, width: CGFloat, visible: Int = 8,
+                  scroll: CGFloat = 0, keepsHistory: Bool = false) -> CGFloat {
+        if keepsHistory && count > visible {
+            let newest = width / 2 + CGFloat(visible - 1) * spacing / 2
+            return newest - CGFloat(count - 1 - index) * spacing + scroll
+        }
+        let gaps = CGFloat(max(count - 1, 0))
+        let step = gaps > 0 ? min(spacing, max(0, width - 200) / gaps) : spacing
+        return width / 2 - gaps * step / 2 + CGFloat(index) * step
+    }
+
+    enum ScrollAction: Equatable { case history, zoom, ignore }
+    static func scrollAction(x: CGFloat, y: CGFloat, overPhoto: Bool, zoomEnabled: Bool) -> ScrollAction {
+        if abs(x) > abs(y) { return .history }
+        return y != 0 && overPhoto && zoomEnabled ? .zoom : .ignore
     }
 }
 
@@ -55,6 +76,7 @@ struct LineView: View {
                     let ropeY = Layout.ropeY(x: x, width: width)
                     PeggedView(item: item, line: line)
                         .frame(width: Layout.cardWidth, height: Layout.panelHeight - ropeY, alignment: .top)
+                        .opacity(min(1, max(0, min(x, width - x) / 90)))
                         .position(x: x, y: ropeY - Layout.pinAbove + (Layout.panelHeight - ropeY) / 2)
                         .zIndex(line.zoomedID == item.id ? 1 : 0)
                 }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The three settings we borrow from macOS. Keeping this small boundary
+/// The settings we borrow from macOS. Keeping this small boundary
 /// injectable lets tests exercise takeover without touching system preferences.
 protocol ScreenshotPreferences {
     func read() -> [String: Any]
@@ -11,7 +11,9 @@ struct SystemScreenshotPreferences: ScreenshotPreferences {
     private let domain = "com.apple.screencapture" as CFString
     // macOS 27 uses location-screenshot; older versions use location.
     private let keys = ["location": "location", "locationScreenshot": "location-screenshot",
-                        "thumbnail": "show-thumbnail"]
+                        "locationRecording": "location-screenrecording",
+                        "target": "target", "targetScreenshot": "target-screenshot",
+                        "targetRecording": "target-screenrecording", "thumbnail": "show-thumbnail"]
 
     func read() -> [String: Any] {
         CFPreferencesAppSynchronize(domain)
@@ -112,13 +114,16 @@ final class Inbox {
     func applyValidated(to destination: URL) throws {
         let before = preferences.read()
         let saved = defaults.dictionary(forKey: savedKey)
-        // One snapshot for the whole takeover, not one per destination. An
-        // existing snapshot also survives a crash or an upgrade from v1.
-        if saved == nil { defaults.set(before, forKey: savedKey) }
         let applied: [String: Any] = ["location": destination.path,
-                                      "locationScreenshot": destination.path, "thumbnail": false]
+            "locationScreenshot": destination.path, "locationRecording": destination.path,
+            "target": "file", "targetScreenshot": "file", "targetRecording": "file", "thumbnail": false]
         let previousApplied = defaults.dictionary(forKey: appliedKey)
-        // Persist recovery information before writing through cfprefsd.
+        let ownedBefore = previousApplied ?? (saved == nil ? [:] : [
+            "location": defaultDestination.path, "locationScreenshot": defaultDestination.path, "thumbnail": false])
+        var snapshot = saved ?? before
+        // 升级时只补拍新接管的设置，不能把旧版本写入的位置误存为用户原值。
+        for key in applied.keys where ownedBefore[key] == nil { snapshot[key] = before[key] }
+        defaults.set(snapshot, forKey: savedKey)
         defaults.set(applied, forKey: appliedKey)
         do {
             try preferences.write(applied)
@@ -126,7 +131,8 @@ final class Inbox {
             try preferences.write(before)
             if let previousApplied { defaults.set(previousApplied, forKey: appliedKey) }
             else { defaults.removeObject(forKey: appliedKey) }
-            if saved == nil { defaults.removeObject(forKey: savedKey) }
+            if let saved { defaults.set(saved, forKey: savedKey) }
+            else { defaults.removeObject(forKey: savedKey) }
             throw error
         }
     }
